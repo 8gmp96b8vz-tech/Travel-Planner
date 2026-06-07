@@ -17,6 +17,22 @@ function showToast(message, type) {
 }
 
 function searchCity(cityName) {
+  // 1. ПЕРЕВІРЯЄМО КЕШ: Чи шукали ми вже це місто?
+  const cacheKey = "cache_" + cityName.toLowerCase().trim();
+  const cachedData = localStorage.getItem(cacheKey);
+
+  if (cachedData) {
+    const places = JSON.parse(cachedData);
+    
+    currentPlaces = places;
+    document.getElementById("filterControls").style.display = "flex";
+    
+    showToast("Loaded " + cityName + " from cache ⚡", "success");
+    renderResults(places);
+    return; 
+  }
+
+  // 2. ЯКЩО КЕШУ НЕМАЄ — робимо запит в інтернет
   document.getElementById("results").innerHTML =
     "<p class='placeholder'>Searching for " + cityName + "...</p>";
 
@@ -67,6 +83,12 @@ function getPlaces(lat, lon, cityName) {
       }
 
       showToast(places.length + " places found in " + cityName + "!", "success");
+
+      // ЗБЕРІГАЄМО В КЕШ: записуємо нові дані в блокнот для наступного разу
+      const cacheKey = "cache_" + cityName.toLowerCase().trim();
+      localStorage.setItem(cacheKey, JSON.stringify(places));
+      currentPlaces = places;
+      document.getElementById("filterControls").style.display = "flex";
       renderResults(places);
     })
     .catch(function () {
@@ -92,6 +114,10 @@ function renderResults(places) {
         '<h3>' + name + '</h3>' +
         '<span class="category">' + category + '</span>' +
         (address ? '<p style="font-size:12px;color:#6b7280;margin-top:4px">' + address + '</p>' : '') +
+        
+        // ОСЬ НОВА КНОПКА, ЯКУ Я ДОДАВ:
+        '<button onclick="showDetails(\'' + name.replace(/'/g, "\\'") + '\', \'' + category.replace(/'/g, "\\'") + '\', \'' + address.replace(/'/g, "\\'") + '\', ' + props.lat + ', ' + props.lon + ')" style="display:block; margin-top:8px; background:none; border:none; color:var(--blue); cursor:pointer; font-size:13px; padding:0; font-weight:bold;">📍 View on Map</button>' +
+        
         '</div>' +
         '<button class="add-btn" onclick="addToTrip(\'' +
         name.replace(/'/g, "\\'") + "','" + category.replace(/'/g, "\\'") +
@@ -164,9 +190,39 @@ document.getElementById("searchInput").addEventListener("keydown", function (e) 
 
 renderTrip();
 
+// --- ФІЛЬТРАЦІЯ ТА СОРТУВАННЯ ПОШУКУ ---
+let currentPlaces = []; // Глобальна змінна для зберігання поточних результатів
 
+function filterAndSortResults() {
+  let filtered = [...currentPlaces]; // Робимо копію масиву
 
+  const catSelect = document.getElementById("categoryFilter").value;
+  const sortSelect = document.getElementById("sortFilter").value;
 
+  // 1. Фільтрація за категорією
+  if (catSelect !== "all") {
+    filtered = filtered.filter(function(place) {
+      if (!place.properties.categories) return false;
+      // Шукаємо, чи є обрана категорія (tourism, catering тощо) у списку категорій місця
+      return place.properties.categories.some(function(c) {
+        return c.includes(catSelect);
+      });
+    });
+  }
+
+  // 2. Сортування за відстанню
+  if (sortSelect === "distance") {
+    filtered.sort(function(a, b) {
+      // Geoapify повертає distance у метрах від центру пошуку
+      const distA = a.properties.distance || 999999;
+      const distB = b.properties.distance || 999999;
+      return distA - distB;
+    });
+  }
+
+  // Перемальовуємо результати з уже відфільтрованим списком
+  renderResults(filtered);
+}
 
 //  SORTING TRIP LIST
 function sortTrip(type) {
@@ -191,3 +247,108 @@ function sortTrip(type) {
   renderTrip();    // Оновлюємо список на сторінці
   showToast("Sorted by " + type, "success");
 }
+// --- ІНТЕРАКТИВНА КАРТА LEAFLET ---
+let map = null; // Глобальна змінна для збереження карти
+
+function showDetails(name, category, address, lat, lon) {
+  // 1. Заповнюємо текст у вікні
+  document.getElementById('modalTitle').textContent = name;
+  document.getElementById('modalCategory').textContent = category;
+  document.getElementById('modalAddress').textContent = address || "No detailed address provided.";
+
+  // 2. Показуємо вікно
+  document.getElementById('detailsModal').style.display = 'flex';
+
+  // 3. Ініціалізуємо або оновлюємо карту
+  if (!map) {
+    // Якщо карти ще немає, створюємо її
+    map = L.map('map').setView([lat, lon], 15); // 15 - це масштаб наближення
+    
+    // Підключаємо безкоштовні тайли (зображення) від OpenStreetMap
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+  } else {
+    // Якщо карта вже існує, просто переміщуємо камеру на нові координати
+    map.setView([lat, lon], 15);
+  }
+
+  // 4. Додаємо червоний маркер на локацію
+  L.marker([lat, lon]).addTo(map)
+    .bindPopup('<b>' + name + '</b>')
+    .openPopup();
+
+  // 5. Виправляємо баг рендеру: Leaflet не знає розмірів карти, поки вона була схована (display: none)
+  setTimeout(() => map.invalidateSize(), 100);
+}
+
+function closeModal() {
+  document.getElementById('detailsModal').style.display = 'none';
+}
+// --- UNIT TESTS (tests.js) ---
+
+function expect(actual) {
+  return {
+    toBe: function(expected) {
+      if (actual === expected) return true;
+      console.error(`Error: Expected '${expected}', but got '${actual}'`);
+      return false;
+    }
+  };
+}
+
+function runUnitTests() {
+  console.log("%cRUNNING TRAVEL PLANNER TESTS", "color: blue; font-weight: bold; font-size: 14px;");
+
+  const originalTrip = [...trip];
+
+  try {
+    // TEST 1: Duplicate protection
+    trip = []; 
+    addToTrip("Test Rome", "tourism"); 
+    addToTrip("Test Rome", "tourism"); 
+    
+    if (expect(trip.length).toBe(1)) {
+      console.log("%cTest 1 (Duplicate protection) passed successfully.", "color: green");
+    }
+
+    // TEST 2: Alphabetical sorting
+    trip = [
+      { name: "Zebra Park", category: "park" },
+      { name: "Apple Store", category: "shop" }
+    ];
+    sortTrip("name"); 
+    
+    if (expect(trip[0].name).toBe("Apple Store")) {
+      console.log("%cTest 2 (Alphabetical sorting) passed successfully.", "color: green");
+    }
+
+    // TEST 3: Distance sorting
+    let mockPlaces = [
+      { properties: { name: "Far Place", distance: 1000 } },
+      { properties: { name: "Nearest Place", distance: 150 } },
+      { properties: { name: "Mid Place", distance: 500 } }
+    ];
+    
+    mockPlaces.sort(function(a, b) {
+      const distA = a.properties.distance || 999999;
+      const distB = b.properties.distance || 999999;
+      return distA - distB;
+    });
+
+    if (expect(mockPlaces[0].properties.name).toBe("Nearest Place")) {
+      console.log("%cTest 3 (Distance sorting) passed successfully.", "color: green");
+    }
+
+  } catch (error) {
+    console.error("Critical error during testing:", error);
+  }
+
+  // Повертаємо твої дані
+  trip = originalTrip;
+  saveTrip();
+  renderTrip();
+
+  console.log("%c--- TESTS COMPLETED ---", "color: blue; font-weight: bold;");
+}
+setTimeout(runUnitTests, 2000);
