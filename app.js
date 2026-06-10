@@ -1,4 +1,4 @@
-const API_KEY = "27bccbcf5a7b40a4a10c36dafd837587";
+const API_KEY = "YOUR_API_KEY_HERE";
 
 function showToast(message, type) {
   const existing = document.getElementById("toast");
@@ -17,11 +17,16 @@ function showToast(message, type) {
 }
 
 function searchCity(cityName) {
-  // 1. ПЕРЕВІРЯЄМО КЕШ: Чи шукали ми вже це місто?
+  // Reset UI filters to default state for a new search
+  document.getElementById("categoryFilter").selectedIndex = 0;
+  document.getElementById("sortFilter").selectedIndex = 0;
+  // 1. CACHING MECHANISM: Check if the city data is already in LocalStorage
+  // We normalize the city name (lowercase, trim) to use as a unique cache key
   const cacheKey = "cache_" + cityName.toLowerCase().trim();
   const cachedData = localStorage.getItem(cacheKey);
 
   if (cachedData) {
+    // If data exists, parse it and render immediately without network request
     const places = JSON.parse(cachedData);
     
     currentPlaces = places;
@@ -32,7 +37,7 @@ function searchCity(cityName) {
     return; 
   }
 
-  // 2. ЯКЩО КЕШУ НЕМАЄ — робимо запит в інтернет
+  // 2. GEOCODING: If no cache, request coordinates from Nominatim API
   document.getElementById("results").innerHTML =
     "<p class='placeholder'>Searching for " + cityName + "...</p>";
 
@@ -62,12 +67,13 @@ function searchCity(cityName) {
 }
 
 function getPlaces(lat, lon, cityName) {
+  // Fetch raw place data within a 5000m radius using Geoapify
   const url =
     "https://api.geoapify.com/v2/places" +
-    "?categories=tourism.attraction,tourism.sights,catering.restaurant,entertainment" +
+     "?categories=tourism.attraction,tourism.sights,catering.restaurant,entertainment,entertainment.museum,national_park,leisure.park" +
     "&filter=circle:" + lon + "," + lat + ",5000" +
     "&bias=proximity:" + lon + "," + lat +
-    "&limit=15" +
+    "&limit=30" +
     "&apiKey=" + API_KEY;
 
   fetch(url)
@@ -84,7 +90,14 @@ function getPlaces(lat, lon, cityName) {
 
       showToast(places.length + " places found in " + cityName + "!", "success");
 
-      // ЗБЕРІГАЄМО В КЕШ: записуємо нові дані в блокнот для наступного разу
+    // We calculate the exact distance for each place from the city center
+    // using the Haversine formula to enable accurate sorting later
+    places.forEach(function(place) {
+        if (place.properties.lat && place.properties.lon) {
+          place.properties.distance = calculateDistance(lat, lon, place.properties.lat, place.properties.lon);
+        }
+      });
+      // Update LocalStorage cache with the new, fully processed data
       const cacheKey = "cache_" + cityName.toLowerCase().trim();
       localStorage.setItem(cacheKey, JSON.stringify(places));
       currentPlaces = places;
@@ -107,17 +120,15 @@ function renderResults(places) {
         ? props.categories[0].split(".").pop().replace(/_/g, " ")
         : "attraction";
       const address = props.address_line2 || "";
+      const dist = props.distance ? props.distance + "m" : "Відстань невідома";
 
       return (
         '<div class="place-card">' +
         '<div>' +
         '<h3>' + name + '</h3>' +
-        '<span class="category">' + category + '</span>' +
+        '<span class="category">' + category + ' (' + dist + ')</span>' + 
         (address ? '<p style="font-size:12px;color:#6b7280;margin-top:4px">' + address + '</p>' : '') +
-        
-        // ОСЬ НОВА КНОПКА, ЯКУ Я ДОДАВ:
         '<button onclick="showDetails(\'' + name.replace(/'/g, "\\'") + '\', \'' + category.replace(/'/g, "\\'") + '\', \'' + address.replace(/'/g, "\\'") + '\', ' + props.lat + ', ' + props.lon + ')" style="display:block; margin-top:8px; background:none; border:none; color:var(--blue); cursor:pointer; font-size:13px; padding:0; font-weight:bold;">📍 View on Map</button>' +
-        
         '</div>' +
         '<button class="add-btn" onclick="addToTrip(\'' +
         name.replace(/'/g, "\\'") + "','" + category.replace(/'/g, "\\'") +
@@ -175,6 +186,21 @@ function removeFromTrip(index) {
   showToast('"' + name + '" removed.', "info");
 }
 
+document.getElementById("customPlaceForm").addEventListener("submit", function(e) {
+  e.preventDefault(); 
+  const nameInput = document.getElementById("customName");
+  const catInput = document.getElementById("customCategory");
+  
+  const name = nameInput.value.trim();
+  const category = catInput.value;
+  if (name.length < 2) {
+    showToast("Name must be at least 2 characters long.", "error");
+    return;
+  }
+  addToTrip(name, category);
+  nameInput.value = "";
+});
+
 document.getElementById("searchBtn").addEventListener("click", function () {
   const city = document.getElementById("searchInput").value.trim();
   if (city === "") {
@@ -189,41 +215,38 @@ document.getElementById("searchInput").addEventListener("keydown", function (e) 
 });
 
 renderTrip();
-
-// --- ФІЛЬТРАЦІЯ ТА СОРТУВАННЯ ПОШУКУ ---
-let currentPlaces = []; // Глобальна змінна для зберігання поточних результатів
-
 function filterAndSortResults() {
-  let filtered = [...currentPlaces]; // Робимо копію масиву
+  console.log("Button clicked. Selected filter: ", document.getElementById("sortFilter").value);
+  
+  // Create a shallow copy of the array to avoid mutating the original fetched data
+  let filtered = [...currentPlaces]; 
 
   const catSelect = document.getElementById("categoryFilter").value;
   const sortSelect = document.getElementById("sortFilter").value;
-
-  // 1. Фільтрація за категорією
+  
+  // 1. FILTERING: Retain only places that match the selected category
   if (catSelect !== "all") {
     filtered = filtered.filter(function(place) {
       if (!place.properties.categories) return false;
-      // Шукаємо, чи є обрана категорія (tourism, catering тощо) у списку категорій місця
       return place.properties.categories.some(function(c) {
         return c.includes(catSelect);
       });
     });
   }
 
-  // 2. Сортування за відстанню
-  if (sortSelect === "distance") {
-    filtered.sort(function(a, b) {
-      // Geoapify повертає distance у метрах від центру пошуку
-      const distA = a.properties.distance || 999999;
-      const distB = b.properties.distance || 999999;
-      return distA - distB;
-    });
+ // 2. SORTING: Reorder the array based on user preference
+ if (sortSelect === "distance") {
+    filtered.sort((a, b) => (a.properties.distance || 999999) - (b.properties.distance || 999999));
+  } else if (sortSelect === "name") {
+    // Alphabetical sort using localeCompare for accurate string comparison
+    filtered.sort((a, b) => (a.properties.name || "").localeCompare(b.properties.name || ""));
+  } else if (sortSelect === "rating") {
+    // Sort by rating (highest first). Fallback to 0 if rating is missing
+    filtered.sort((a, b) => (b.properties.rating || 0) - (a.properties.rating || 0));
   }
 
-  // Перемальовуємо результати з уже відфільтрованим списком
   renderResults(filtered);
 }
-
 //  SORTING TRIP LIST
 function sortTrip(type) {
   if (trip.length === 0) {
@@ -232,60 +255,112 @@ function sortTrip(type) {
   }
 
   if (type === 'name') {
-    // Сортуємо за назвою (від A до Z)
+    // Sorted by name (from A to Z)
     trip.sort(function(a, b) {
       return a.name.localeCompare(b.name);
     });
   } else if (type === 'category') {
-    // Сортуємо за категорією (від A до Z)
+    // Sorted by category (from A to Z)
     trip.sort(function(a, b) {
       return a.category.localeCompare(b.category);
     });
   }
 
-  saveTrip();      // Зберігаємо відсортований список
-  renderTrip();    // Оновлюємо список на сторінці
+  saveTrip();      // Save sorted list
+  renderTrip();
   showToast("Sorted by " + type, "success");
 }
-// --- ІНТЕРАКТИВНА КАРТА LEAFLET ---
-let map = null; // Глобальна змінна для збереження карти
+let map = null; 
+const detailsCache = {};
 
-function showDetails(name, category, address, lat, lon) {
-  // 1. Заповнюємо текст у вікні
+async function showDetails(name, category, address, lat, lon) {
   document.getElementById('modalTitle').textContent = name;
   document.getElementById('modalCategory').textContent = category;
   document.getElementById('modalAddress').textContent = address || "No detailed address provided.";
+  document.getElementById('modalMapLink').href = "https://www.google.com/maps/search/?api=1&query=" + lat + "," + lon;
+  
+  document.getElementById('modalDescription').textContent = "Searching Wikipedia for more details...";
+  const img = document.getElementById('modalImage');
+  img.style.display = 'none'; 
 
-  // 2. Показуємо вікно
   document.getElementById('detailsModal').style.display = 'flex';
 
-  // 3. Ініціалізуємо або оновлюємо карту
+  const cacheKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  
+  if (detailsCache[cacheKey]) {
+    console.log("Loading details from local cache ⚡");
+    updateModalContent(detailsCache[cacheKey]);
+  } else {
+    try {
+      const geoUrl = `https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&list=geosearch&gscoord=${lat}|${lon}&gsradius=300&gslimit=1`;
+      const geoResponse = await fetch(geoUrl);
+      const geoData = await geoResponse.json();
+
+      let searchTitle = name; 
+
+      if (geoData.query && geoData.query.geosearch && geoData.query.geosearch.length > 0) {
+        searchTitle = geoData.query.geosearch[0].title;
+      }
+
+      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=extracts|pageimages&exintro&explaintext&pithumbsize=600&titles=${encodeURIComponent(searchTitle)}`;
+      const response = await fetch(wikiUrl);
+      const data = await response.json();
+      const pages = data.query.pages;
+      const pageId = Object.keys(pages)[0];
+
+      if (pageId !== "-1") {
+        const page = pages[pageId];
+        
+        let shortDesc = page.extract || "A unique description was not available.";
+        if (shortDesc.length > 220) {
+          shortDesc = shortDesc.substring(0, 220);
+          shortDesc = shortDesc.substring(0, Math.min(shortDesc.length, shortDesc.lastIndexOf(" "))) + "...";
+        }
+
+        detailsCache[cacheKey] = {
+          description: shortDesc,
+          image: page.thumbnail ? page.thumbnail.source : null
+        };
+      } else {
+        detailsCache[cacheKey] = {
+          description: `This specific location has been verified at coordinates ${lat.toFixed(4)}, ${lon.toFixed(4)}. Further historical details were not found on Wikipedia.`,
+          image: null
+        };
+      }
+      updateModalContent(detailsCache[cacheKey]);
+
+    } catch (error) {
+      console.error("Error fetching dynamic details:", error);
+      document.getElementById('modalDescription').textContent = "Error loading details.";
+    }
+  }
+
   if (!map) {
-    // Якщо карти ще немає, створюємо її
-    map = L.map('map').setView([lat, lon], 15); // 15 - це масштаб наближення
-    
-    // Підключаємо безкоштовні тайли (зображення) від OpenStreetMap
+    map = L.map('map').setView([lat, lon], 15);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
   } else {
-    // Якщо карта вже існує, просто переміщуємо камеру на нові координати
     map.setView([lat, lon], 15);
   }
 
-  // 4. Додаємо червоний маркер на локацію
   L.marker([lat, lon]).addTo(map)
     .bindPopup('<b>' + name + '</b>')
     .openPopup();
 
-  // 5. Виправляємо баг рендеру: Leaflet не знає розмірів карти, поки вона була схована (display: none)
   setTimeout(() => map.invalidateSize(), 100);
 }
 
-function closeModal() {
-  document.getElementById('detailsModal').style.display = 'none';
+function updateModalContent(data) {
+  document.getElementById('modalDescription').textContent = data.description;
+  const img = document.getElementById('modalImage');
+  if (data.image) {
+    img.src = data.image;
+    img.style.display = 'block';
+  } else {
+    img.style.display = 'none'; 
+  }
 }
-// --- UNIT TESTS (tests.js) ---
 
 function expect(actual) {
   return {
@@ -343,12 +418,30 @@ function runUnitTests() {
   } catch (error) {
     console.error("Critical error during testing:", error);
   }
-
-  // Повертаємо твої дані
   trip = originalTrip;
   saveTrip();
   renderTrip();
 
-  console.log("%c--- TESTS COMPLETED ---", "color: blue; font-weight: bold;");
+  console.log("%cTESTS COMPLETED", "color: blue; font-weight: bold;");
 }
 setTimeout(runUnitTests, 2000);
+
+function closeModal() {
+  document.getElementById('detailsModal').style.display = 'none';
+}
+
+// Mathematical implementation of the Haversine formula
+// Calculates the great-circle distance between two geographic coordinates in meters
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distanceKm = R * c; 
+  return Math.round(distanceKm * 1000); // Return result in meters
+}

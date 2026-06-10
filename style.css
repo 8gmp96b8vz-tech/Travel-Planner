@@ -23,10 +23,11 @@ body {
   padding: 18px 32px;
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 4px;
+  margin-left: -4px;
   flex-wrap: wrap;
 }
-.logo { color: #fff; font-size: 22px; font-weight: bold; letter-spacing: 1px; }
+.logo { color: #fff; font-size: 22px; font-weight: bold; letter-spacing: 1px;}
 .search-bar { display: flex; gap: 8px; flex: 1; }
 .search-bar input {
   flex: 1; padding: 10px 16px; border: none;
@@ -126,7 +127,6 @@ body {
   from { opacity: 1; transform: translateY(0); }
   to   { opacity: 0; transform: translateY(16px); }
 }
-/* --- КНОПКИ СОРТУВАННЯ --- */
 .sort-buttons {
   display: flex;
   gap: 8px;
@@ -134,7 +134,7 @@ body {
 }
 
 .sort-buttons button {
-  flex: 1; /* щоб кнопки займали однакову ширину */
+  flex: 1; 
   padding: 8px;
   background: var(--blue-lt);
   color: var(--blue);
@@ -148,15 +148,15 @@ body {
 }
 
 .sort-buttons button:hover {
-  background: #cce0f5; /* трохи темніший синій при наведенні */
+  background: #cce0f5; 
 }
-/* --- МОДАЛЬНЕ ВІКНО З КАРТОЮ --- */
+
 .modal-overlay {
   position: fixed; 
   top: 0; left: 0; width: 100%; height: 100%;
   background: rgba(0, 0, 0, 0.6);
   display: flex; align-items: center; justify-content: center;
-  z-index: 1000; /* Вікно завжди буде поверх усього */
+  z-index: 1000; 
 }
 
 .modal-content {
@@ -166,7 +166,7 @@ body {
   border-radius: var(--radius);
   position: relative; 
   box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-  animation: toast-in 0.3s ease; /* Використовуємо твою ж анімацію появи */
+  animation: toast-in 0.3s ease; 
 }
 
 .close-btn {
@@ -178,5 +178,3 @@ body {
   cursor: pointer; color: var(--text);
   transition: background 0.15s;
 }
-
-.close-btn:hover { background: #e2e8f0; }
